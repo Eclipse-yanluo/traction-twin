@@ -4,6 +4,10 @@ const TwinModel = (() => {
   const length = 12;
   const injectionIndex = 25;
   const sourceVoltage = 780;
+  const departure = 1.5;
+  const coastSeconds = 35;
+  const nominalDeceleration = 0.9;
+  const stopRange = { min: 4, max: 11.5, step: 0.1 };
   const phases = { ready: "发车准备", traction: "启动加速", cruise: "巡航", coast: "惰行", brake: "制动", stopped: "停车" };
   const vehicle = { mass: 170_000, maxForce: 165_000, maxWheelPower: 950_000, auxiliary: 35_000, efficiency: 0.9,
     regenEfficiency: 0.85, regenLimit: 850_000, stationAbsorbLimit: 450_000, minVoltage: 550, maxVoltage: 900, maxDraw: 1400, maxRegen: 900 };
@@ -12,7 +16,7 @@ const TwinModel = (() => {
     { id: "R02", from: 4, to: 8, name: "中段回流区" },
     { id: "R03", from: 8, to: 12, name: "东段回流区" },
   ];
-  const defaults = { fault: "insulation", zone: "R02", feed: "both", receiver: "reversible", speed: 70, cruise: 180 };
+  const defaults = { fault: "insulation", zone: "R02", feed: "both", receiver: "reversible", speed: 70, stopKm: stopRange.max };
   const scenarioNames = { normal: "健康基线", insulation: "轨地绝缘下降", sensor: "轨电位测点偏置" };
 
   function solveRail(nodes, fixed, resistance, loads, shunts) {
@@ -49,6 +53,9 @@ const TwinModel = (() => {
   }
 
   function simulate({ position, current, feed, fault, zone }) {
+    const nearest = Math.round(position);
+    // A calculated station stop can differ from an integer kilometre by roundoff.
+    if (Math.abs(position - nearest) < 1e-9) position = nearest;
     const nodes = Array.from({ length: length + 1 }, (_, i) => i);
     if (!Number.isInteger(position)) nodes.push(position);
     nodes.sort((a, b) => a - b);
@@ -102,32 +109,48 @@ const TwinModel = (() => {
     return result;
   }
 
+  const runningResistance = speed => 3600 + 72 * speed + 18 * speed ** 2;
+  function coastAndBrakeDistance(speed) {
+    let metres = 0;
+    for (let t = 0; t < coastSeconds; t++) {
+      const nextSpeed = Math.max(0, speed - runningResistance(speed) / vehicle.mass);
+      metres += (speed + nextSpeed) / 2;
+      speed = nextSpeed;
+    }
+    return (metres + speed ** 2 / (2 * nominalDeceleration)) / 1000;
+  }
+
   function makeRun(settings) {
     const samples = [];
     const stages = [];
     const target = settings.speed / 3.6;
     let speed = 0;
-    let position = 1.5;
+    let position = departure;
+    let deceleration = nominalDeceleration;
     let phase = "ready";
     let phaseStart = 0;
     for (let index = 0; ; index++) {
       let next = phase;
       if (phase === "ready" && index >= 5) next = "traction";
       if (phase === "traction" && speed >= target - 1e-6) next = "cruise";
-      if (phase === "cruise" && index - phaseStart >= settings.cruise) next = "coast";
-      if (phase === "coast" && index - phaseStart >= 35) next = "brake";
+      if (phase === "cruise" && settings.stopKm - position <= coastAndBrakeDistance(speed) + speed / 2000) next = "coast";
+      if (phase === "coast" && index - phaseStart >= coastSeconds) {
+        next = "brake";
+        // Match the remaining distance from the 1 s sampled coasting transition.
+        deceleration = speed ** 2 / (2 * (settings.stopKm - position) * 1000);
+      }
       if (phase === "brake" && speed <= 1e-6) next = "stopped";
       if (next !== phase || index === 0) {
         phase = next;
         phaseStart = index;
         stages.push({ phase, index });
       }
-      const runningResistance = 3600 + 72 * speed + 18 * speed ** 2;
+      const drag = runningResistance(speed);
       const ramp = Math.min(1, (index - phaseStart + 1) / 4);
       const force = phase === "traction"
-        ? Math.min(vehicle.maxForce * ramp, vehicle.maxWheelPower / Math.max(0.01, speed), runningResistance + vehicle.mass * Math.max(0, target - speed))
-        : phase === "cruise" ? runningResistance : 0;
-      const brakeForce = phase === "brake" ? Math.max(0, vehicle.mass * Math.min(speed, 0.9) - runningResistance) : 0;
+        ? Math.min(vehicle.maxForce * ramp, vehicle.maxWheelPower / Math.max(0.01, speed), drag + vehicle.mass * Math.max(0, target - speed))
+        : phase === "cruise" ? drag : 0;
+      const brakeForce = phase === "brake" ? vehicle.mass * deceleration - drag : 0;
       const brakePower = brakeForce * speed;
       const lowSpeedBlend = Math.min(1, Math.max(0, (speed * 3.6 - 5) / 10));
       const generated = Math.min(vehicle.regenLimit, brakePower * vehicle.regenEfficiency * lowSpeedBlend);
@@ -150,8 +173,9 @@ const TwinModel = (() => {
         friction: Math.max(0, brakePower - generated / vehicle.regenEfficiency) });
       if (phase === "stopped" && index - phaseStart >= 5) break;
       const effectiveForce = speed > 1e-6 ? Math.min(force, observed.wheelPower / speed) : force;
-      const nextSpeed = Math.max(0, speed + (effectiveForce - runningResistance - brakeForce) / vehicle.mass);
-      position += (speed + nextSpeed) / 2000;
+      const dt = phase === "brake" ? Math.min(1, speed / deceleration) : 1;
+      const nextSpeed = Math.max(0, speed + (effectiveForce - drag - brakeForce) / vehicle.mass * dt);
+      position += (speed + nextSpeed) * dt / 2000;
       speed = nextSpeed;
     }
     return { samples, stages, firstDetection: samples.find(sample => sample.diagnosis)?.index };
@@ -163,7 +187,7 @@ const TwinModel = (() => {
     return full ? `+${minute}:${seconds}` : `${minute}:${seconds}`;
   }
 
-  return { defaults, zones, injectionIndex, scenarioNames, phases, vehicle, simulate, makeRun, time };
+  return { defaults, zones, injectionIndex, scenarioNames, phases, vehicle, stopRange, simulate, makeRun, time };
 })();
 
 if (typeof module !== "undefined") module.exports = TwinModel;

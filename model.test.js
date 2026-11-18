@@ -14,14 +14,14 @@ test("a trip starts at rest, accelerates, coasts and stops in every supported ne
     for (const receiver of ["reversible", "none"]) {
       for (const fault of ["normal", "insulation", "sensor"]) {
         for (const zone of model.zones) {
-          for (const [speed, cruise] of [[40, 30], [70, 180], [80, 240]]) {
-            const run = model.makeRun({ ...model.defaults, feed, receiver, fault, zone: zone.id, speed, cruise });
+          for (const [speed, stopKm] of [[40, 4], [70, 7.3], [80, 4], [80, 11.5]]) {
+            const run = model.makeRun({ ...model.defaults, feed, receiver, fault, zone: zone.id, speed, stopKm });
             assert.deepEqual(run.stages.map(stage => stage.phase), Object.keys(model.phases));
             const start = run.samples[0];
             const finish = run.samples.at(-1);
             assert.equal(start.speed, 0);
             assert.equal(finish.speed, 0);
-            assert.ok(finish.position > start.position && finish.position < 12);
+            approximate(finish.position, stopKm, 1e-7);
             approximate(run.samples[run.stages[2].index].speed * 3.6, speed);
             for (const [index, sample] of run.samples.entries()) {
               const p = sample.observed;
@@ -31,9 +31,11 @@ test("a trip starts at rest, accelerates, coasts and stops in every supported ne
               approximate(p.stationA + p.stationB, p.current);
               approximate(p.returnA + p.returnB + p.leakage, p.current);
               if (index) assert.ok(sample.position >= run.samples[index - 1].position);
-              if (sample.phase === "coast" || sample.phase === "stopped") approximate(p.power, v.auxiliary);
+              if (sample.phase === "coast" || sample.phase === "stopped") approximate(p.power, v.auxiliary, 1e-3);
               if (sample.phase === "brake") {
-                approximate(p.power + sample.generated, p.rheostat + v.auxiliary);
+                const next = run.samples[index + 1];
+                assert.ok(next.speed < sample.speed && sample.speed - next.speed < 1.1);
+                approximate(p.power + sample.generated, p.rheostat + v.auxiliary, 1e-3);
                 approximate(sample.brakePower, sample.friction + sample.generated / v.regenEfficiency);
                 if (receiver === "none") assert.ok(p.current >= 0);
                 else assert.ok(780 * -p.current <= v.stationAbsorbLimit + 1e-5);

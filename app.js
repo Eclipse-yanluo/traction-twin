@@ -183,7 +183,7 @@ function topology() {
   const feeder = (id, x, isOff, flip) => svgAsset(id, `feeder ${isOff ? "map-off" : ""}`, scene.feeder(x, id, isOff, flip));
   const railPath = `M${left - 3} 198v60H${right - 3}${off ? "" : "v-60"}`;
   const train = svgAsset("T01", "map-train", scene.train(trainX, `T01 · ${km(p.position)} · ${fmt(p.speed * 3.6, 0)} km/h`));
-  get("feed-caption").textContent = feedLabel();
+  get("feed-caption").textContent = `${feedLabel()} · 停车目标 ${km(state.settings.stopKm)}`;
   document.querySelectorAll("[data-layer]").forEach(button => button.setAttribute("aria-pressed", button.dataset.layer === state.layer));
   const expand = document.querySelector('[data-action="expand"]');
   expand.setAttribute("aria-pressed", state.expanded);
@@ -352,10 +352,10 @@ function simulationPage() {
   return `${pageHeading("仿真实验", "配置一次从发车到停车的过程，比较不同供电和再生接收条件下的功率与电流。")}
     <div class="dashboard-grid experiment-grid"><form id="experiment-form" class="card data-card experiment-form"><div class="card-head"><div><h2>工况参数</h2><p>直流 750 V · 示例区间 A · 12.0 km</p></div><span class="metric-icon blue">${icon("settings", 19)}</span></div>
     <div class="form-body"><div class="form-grid"><label>供电方式<select name="feed">${options([["both", "双边供电"], ["west", "西端单边供电"]], fields.feed)}</select></label><label>再生能量接收<select name="receiver">${options([["reversible", "可逆变电所（全网 450 kW）"], ["none", "普通整流所（无其他受电负荷）"]], fields.receiver)}</select></label>
-    <label>巡航目标速度（km/h）<input type="number" name="speed" required min="40" max="80" step="5" value="${fields.speed}"></label><label>巡航时长（s）<input type="number" name="cruise" required min="30" max="240" step="5" value="${fields.cruise}"></label>
+    <label>巡航目标速度（km/h）<input type="number" name="speed" required min="40" max="80" step="5" value="${fields.speed}"></label><label>停车里程（km）<input type="number" name="stopKm" required min="${TwinModel.stopRange.min}" max="${TwinModel.stopRange.max}" step="${TwinModel.stopRange.step}" value="${fields.stopKm}"></label>
     <label>扰动场景<select name="fault">${options(Object.entries(TwinModel.scenarioNames), fields.fault)}</select></label><label>扰动注入区段<select name="zone">${options(TwinModel.zones.map(z => [z.id, `${z.id} · ${z.name}`]), fields.zone)}</select></label></div>
     <div class="form-footer"><button type="button" class="button secondary" data-action="defaults">恢复默认参数</button><button type="submit" class="button primary">${icon("play", 17)}运行仿真</button></div></div></form>
-    <section class="card data-card run-summary"><div class="card-head"><div><h2>实验流程</h2><p>K1+500 发车 · 步长 1 秒 · 停车后记录 5 秒</p></div><span class="metric-icon teal">${icon("activity", 18)}</span></div><div class="experiment-steps"><div><b>1</b><span><strong>启动并巡航</strong><small>牵引力逐步建立，按轮上功率、电流与端电压限值加速。到设定速度后巡航。</small></span></div><div><b>2</b><span><strong>惰行并制动</strong><small>惰行 35 秒后制动。再生功率优先供车载辅助负荷，剩余按电网接收条件分配。</small></span></div><div><b>3</b><span><strong>比较观测与健康基线</strong><small>扰动从 +00:25 起注入。使用同位置、速度和控制指令计算健康基线。</small></span></div></div><a class="text-button source-link" href="#sources">查看模型与限值 ${icon("arrow", 16)}</a></section></div>`;
+    <section class="card data-card run-summary"><div class="card-head"><div><h2>实验流程</h2><p>K1+500 发车 · 步长 1 秒 · 停车后记录 5 秒</p></div><span class="metric-icon teal">${icon("activity", 18)}</span></div><div class="experiment-steps"><div><b>1</b><span><strong>启动并巡航</strong><small>牵引力逐步建立，按轮上功率、电流与端电压限值加速。到设定速度后巡航。</small></span></div><div><b>2</b><span><strong>惰行并定点停车</strong><small>按剩余里程提前结束巡航，惰行 35 秒后制动到目标位置。</small></span></div><div><b>3</b><span><strong>比较观测与健康基线</strong><small>扰动从 +00:25 起注入。使用同位置、速度和控制指令计算健康基线。</small></span></div></div><a class="text-button source-link" href="#sources">查看模型与限值 ${icon("arrow", 16)}</a></section></div>`;
 }
 
 function eventsPage() {
@@ -371,7 +371,7 @@ function eventResults() {
 
 function sourcesPage() {
   return `${pageHeading("数据与模型", "示例资产与监测量均由本地仿真生成，用于验证拓扑、资产和诊断的联动。")}
-    <div class="dashboard-grid experiment-grid"><section class="card data-card"><div class="card-head"><div><h2>直流牵引等效电路</h2><p>集中参数稳态模型</p></div><span class="metric-icon blue">${icon("bolt", 19)}</span></div><dl class="technical-list"><div><dt>网络与边界</dt><dd>12 km 单区间。供电端为 780 V 理想电源，所端钢轨回流电位固定为 0 V。单边供电时东端边界开路。</dd></div><div><dt>线路及负荷</dt><dd>接触网 0.022 Ω/km、钢轨 0.018 Ω/km。根据列车端压与网侧功率联立求解电流（P = UI），正值取电，负值回馈。</dd></div><div><dt>车辆与启动</dt><dd>170 t，牵引力上限 165 kN，轮上牵引功率上限 950 kW。牵引力逐步建立，轮上功率为力 × 速度。牵引效率 90%，网侧先供 35 kW 辅助负荷，取电上限 1400 A，端压降至 550 V 时削减牵引功率。</dd></div><div><dt>制动与能量分配</dt><dd>目标减速度 0.9 m/s²，电制动发电上限 850 kW，效率 85%，15–5 km/h 逐渐退出。发电先供车载辅助负荷。可逆模式下变电所合计最多吸收 450 kW，列车端压上限 900 V、回馈电流上限 900 A。剩余电能由制动电阻耗散，剩余制动力由摩擦制动补足。</dd></div><div><dt>扰动参数</dt><dd>正常轨地支路 6.25 Ω。绝缘场景将目标区段的支路降至 0.80 Ω。测点偏置场景只在读数上增加 8 V。</dd></div><div><dt>诊断阈值</dt><dd>按同工况基线计算残差。漏流残差绝对值 ≥ 3 A 时提示复核绝缘；轨电位残差绝对值 ≥ 5 V 时提示复核测点。阈值为演示参数。</dd></div><div><dt>应用范围</dt><dd>示例参数用于整车纵向与直流网络稳态联算。车载电机相电流、变流器瞬态、坡度和其他列车的动态用电需引入对应模型与数据。</dd></div></dl></section>
+    <div class="dashboard-grid experiment-grid"><section class="card data-card"><div class="card-head"><div><h2>直流牵引等效电路</h2><p>集中参数稳态模型</p></div><span class="metric-icon blue">${icon("bolt", 19)}</span></div><dl class="technical-list"><div><dt>网络与边界</dt><dd>12 km 单区间。供电端为 780 V 理想电源，所端钢轨回流电位固定为 0 V。单边供电时东端边界开路。</dd></div><div><dt>线路及负荷</dt><dd>接触网 0.022 Ω/km、钢轨 0.018 Ω/km。根据列车端压与网侧功率联立求解电流（P = UI），正值取电，负值回馈。</dd></div><div><dt>车辆与启动</dt><dd>170 t，牵引力上限 165 kN，轮上牵引功率上限 950 kW。牵引力逐步建立，轮上功率为力 × 速度。牵引效率 90%，网侧先供 35 kW 辅助负荷，取电上限 1400 A，端压降至 550 V 时削减牵引功率。</dd></div><div><dt>制动与能量分配</dt><dd>按 0.9 m/s² 估算制动距离，再根据剩余里程微调减速度。电制动发电上限 850 kW，效率 85%，15–5 km/h 逐渐退出。发电先供车载辅助负荷。可逆模式下变电所合计最多吸收 450 kW，列车端压上限 900 V、回馈电流上限 900 A。剩余电能由制动电阻耗散，剩余制动力由摩擦制动补足。</dd></div><div><dt>扰动参数</dt><dd>正常轨地支路 6.25 Ω。绝缘场景将目标区段的支路降至 0.80 Ω。测点偏置场景只在读数上增加 8 V。</dd></div><div><dt>诊断阈值</dt><dd>按同工况基线计算残差。漏流残差绝对值 ≥ 3 A 时提示复核绝缘；轨电位残差绝对值 ≥ 5 V 时提示复核测点。阈值为演示参数。</dd></div><div><dt>应用范围</dt><dd>示例参数用于整车纵向与直流网络稳态联算。车载电机相电流、变流器瞬态、坡度和其他列车的动态用电需引入对应模型与数据。</dd></div></dl></section>
     <section class="card data-card"><div class="card-head"><div><h2>设计依据</h2><p>调研、直流牵引建模与接触网数据</p></div><span class="metric-icon teal">${icon("file", 18)}</span></div>
     <div class="source-links"><a href="https://www.mdpi.com/1996-1073/11/11/3211" target="_blank" rel="noopener noreferrer"><span><strong>直流铁路多列车电气建模</strong><small>普通整流所、再生接收与车载制动电阻</small></span>${icon("external", 17)}</a><a href="https://github.com/Light-ZhangTao/Insulator-Defect-Detection" target="_blank" rel="noopener noreferrer"><span><strong>CID 绝缘子数据</strong><small>接触网缺陷检测的数据入口</small></span>${icon("external", 17)}</a><a href="https://doi.org/10.1038/s41597-024-02918-9" target="_blank" rel="noopener noreferrer"><span><strong>RailFOD23</strong><small>铁路供电线路异物图像数据</small></span>${icon("external", 17)}</a></div></section></div>`;
 }
@@ -554,7 +554,7 @@ document.addEventListener("submit", event => {
   if (event.target.id !== "experiment-form") return;
   event.preventDefault();
   const form = Object.fromEntries(new FormData(event.target));
-  const settings = { ...form, speed: Number(form.speed), cruise: Number(form.cruise) };
+  const settings = { ...form, speed: Number(form.speed), stopKm: Number(form.stopKm) };
   stopPlayback();
   state.settings = settings;
   state.run = TwinModel.makeRun(settings);
